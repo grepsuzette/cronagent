@@ -1,0 +1,95 @@
+#!/bin/bash
+
+logdir="$HOME/opt/var/log/cronagent/"
+progName="$( basename "$0" )"
+version=0.1.0
+
+# enter node full path and full path to qwen-code or gemini-cli (no symlink!)
+qwen_or_gemini_command() {
+    /opt/homebrew/bin/node /opt/homebrew/lib/node_modules/@qwen-code/qwen-code/bundle/gemini.js "$@"
+}
+
+warn() { local fmt="$1"; shift; printf "$progName: $fmt\n" "$@" >&2; }
+die () { local st="$?"; warn "$@"; exit "$st"; } 
+define(){ IFS='\n' read -r -d '' ${1} || true; }
+
+define helpString <<EOF
+$progName v$version - Calls and manages crontab subagent calls for qwen-code/gemini-cli
+Syntax: $progName [OPTIONS] COMMAND [args]
+
+OPTIONS:
+ --help -h        Show help
+ --version -v     Show version and exit
+ --debug -D       Pretend to run but actually just echo everything
+
+COMMANDS:
+  list: list all cronagent entries in the crontab
+  new: create new cronagent entry
+  logs: show execution logs
+  run /path/to/project @<agentName> arg1... : to put in the crontab (run agent in qwen-code, redirect stdout/err to files)
+EOF
+
+if [[ "$@" =~ ^(-[a-zA-Z0-9_-]+[[:blank:]]+)*(.*)$ ]]; then
+	options="${BASH_REMATCH[1]}"
+	rest="${BASH_REMATCH[2]}"
+fi
+
+args=()
+for i in "$@"; do
+    case $i in
+        --help | -h ) shift; echo "$helpString"; exit 0 ;;
+        --version | -v ) shift; echo "$version"; exit 0 ;;
+        --debug | -D ) shift; optDebug=1;;
+        --foo | -f ) shift;; # just for testing
+        -* ) echo "Unknown option: $i"; exit 6 ;;
+        *) break ;; # continue parsing rest
+    esac
+done
+
+command="$1"
+shift
+
+case "$command" in
+    run) 
+        dir="$1"
+        shift
+        [[ -d "$dir" ]] || die "Directory $dir not found"
+        agent="$1"
+        shift
+        args=("$@")
+        joined="${args[*]}"
+        mkdir -p "$logdir"
+        [[ "$agent" =~ ^@[a-zA-Z0-9_][a-zA-Z0-9_-]*$ ]] || die "expected: run /project/dir @<agentName> args"
+        if [[ -n $optDebug ]]; then
+            echo "qwen-code --prompt \"Instanciate agent $agent PROACTIVELY with the following params: $joined\""
+        else
+            (
+                cd "$dir"
+                date '+%Y-%m-%d %H:%M:%S '
+                echo "cronagent run $agent (args: $joined)..."
+                qwen_or_gemini_command \
+                    --approval-mode auto-edit \
+                    --prompt "Instanciate agent @$agent PROACTIVELY with the following params: $joined"
+                echo ----------------------------------------------------
+            ) >> "$logdir/$agent.log" 2>&1
+        fi
+        ;;
+    list) 
+        crontab -l | grep "cronagent run" 
+        ;;
+    logs) 
+        if command -v fd >/dev/null; then 
+            fd . "$logdir"
+        else
+            find "$logdir" -name '*'
+        fi
+        ;;
+    new) 
+        echo "First of all you will need to create a qwen subagent."
+        echo "In qwen, type /agent create"
+        read -p "-------- Hit <Return> to contine (paused) --------"
+        echo "When it's done, just add a line manually in your crontab:"
+        echo "0 * * * * $progName run /path/to/project/dir @<agentName> [<args>]"
+        ;;
+    help|*) echo "$helpString"; exit 0;;
+esac
