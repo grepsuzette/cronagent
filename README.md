@@ -21,6 +21,8 @@ It can
 Here is what an agent looks like:
 
 ```crontab
+PATH=/bin:/usr/bin:/opt/homebrew/bin
+
 */5 * * * *  /path/to/cronagent run /Users/bob/stories @dnd-storyteller Write a new story and stop.
 ```
 
